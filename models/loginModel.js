@@ -1,9 +1,9 @@
-const db = require('../db');
+// const db = require('../db');
 
-const login = {
-    check: (callback) => {
-        db.query('select * from users',callback);
-    }
-}
+// const login = {
+//     check: (callback) => {
+//         db.query('select * from users',callback);
+//     }
+// }
 
-module.exports = login;
+// module.exports = login;

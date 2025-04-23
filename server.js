@@ -1,202 +1,188 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mysql = require('mysql');
 const cors = require('cors');
+const { Pool } = require('pg');
 const app = express();
-const db = require('./db');
+
 app.use(cors());
-
-const userDetailsRoutes = require('./routes/userDetailsRoutes');
-const loginRoutes = require('./routes/loginRoutes');
-const authRoutes = require('./routes/authRoutes');
-
 app.use(express.json());
-app.use('/api/login',loginRoutes);
-app.use('/api/userDetials',userDetailsRoutes);
-app.use('/api/auth',authRoutes);
 
-
-app.get('/messages/:user1/:user2', (req, res) => {
-    const { user1, user2 } = req.params;
-    const query = `
-      SELECT * FROM messages
-      WHERE (sender_id = ? AND receiver_id = ?)
-         OR (sender_id = ? AND receiver_id = ?)
-      ORDER BY timestamp ASC
-    `;
-    db.query(query, [user1, user2, user2, user1], (err, results) => {
-      if (err) return res.status(500).json({ error: err });
-      res.json(results);
-    });
-  });
-
-  app.get('/conversations/:user1', (req, res) => {
-    const { user1} = req.params;
-    const query = `
-      SELECT *  FROM 
-        ( SELECT *, ROW_NUMBER() OVER ( PARTITION BY receiver_id  ORDER BY timestamp DESC ) AS rn
-        FROM messages  WHERE sender_id = ?
-        ) AS temp
-        WHERE rn = 1;
-    `;
-    db.query(query, [user1], (err, results) => {
-      if (err) return res.status(500).json({ error: err });
-      res.json(results);
-    });
-  });
-
-  app.get('/find/:user2', (req, res) => {
-    const { user2 } = req.params;
-    const query = `select * from users where email = ?;`;
-    db.query(query, [user2], (err, results) => {
-      if (err) return res.status(500).json({ error: err });
-      if(results.length==0){
-        return res.status(401).json({message:"User not found"});
-      }
-      else{
-        return res.status(200).json({message:`User:${user2} found`});
-      }
-      
-    });
-  });
-
-  app.get('/findall', (req, res) => {
-    const query = `select * from users;`;
-    db.query(query, (err, results) => {
-      if (err) return res.status(500).json({ error: err });
-      res.json(results);
-      // if(results.length==0){
-      //   return res.status(401).json({message:"User not found"});
-      // }
-      // else{
-      //   return res.status(200).json({message:`Users found`});
-      // }
-      
-    });
-  });
-
-
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' }
+// PostgreSQL DB Config
+const db = new Pool({
+  connectionString: 'postgresql://root:kCBuMhyQpnu2uacBpPCwgtDuuTuhN38v@dpg-cvubgchr0fns73fvqj6g-a.oregon-postgres.render.com/test_kl8i',
+  ssl: {
+    rejectUnauthorized: false // required for Render
+  }
 });
 
-const userSocketMap = {}; // userId -> socket.id
+// Routes
+// const userDetailsRoutes = require('./routes/userDetailsRoutes');
+// const loginRoutes = require('./routes/loginRoutes');
+const authRoutes = require('./routes/authRoutes');
+
+// app.use('/api/login', loginRoutes);
+// app.use('/api/userDetials', userDetailsRoutes);
+app.use('/api/auth', authRoutes);
+
+// Get messages between two users
+app.get('/messages/:user1/:user2', async (req, res) => {
+  const { user1, user2 } = req.params;
+  try {
+    const query = `
+      SELECT * FROM messages
+      WHERE (sender_id = $1 AND receiver_id = $2)
+         OR (sender_id = $2 AND receiver_id = $1)
+      ORDER BY timestamp ASC
+    `;
+    const result = await db.query(query, [user1, user2]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Latest conversations for user1
+app.get('/conversations/:user1', async (req, res) => {
+  const { user1 } = req.params;
+  try {
+    const query = `
+      SELECT * FROM (
+        SELECT *, 
+               ROW_NUMBER() OVER (PARTITION BY receiver_id ORDER BY timestamp DESC) AS rn
+        FROM messages
+        WHERE sender_id = $1
+      ) AS temp
+      WHERE rn = 1;
+    `;
+    const result = await db.query(query, [user1]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Find user by email
+app.get('/find/:user2', async (req, res) => {
+  const { user2 } = req.params;
+  try {
+    const query = `SELECT * FROM users WHERE email = $1`;
+    const result = await db.query(query, [user2]);
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ message: "User not found" });
+    } else {
+      return res.status(200).json({ message: `User: ${user2} found` });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all users
+app.get('/findall', async (req, res) => {
+  try {
+    const query = `SELECT * FROM users`;
+    const result = await db.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
+
+const userSocketMap = {};
 
 io.on('connection', socket => {
   console.log(`🔌 Connected: ${socket.id}`);
 
   socket.on('register', userId => {
     userSocketMap[userId] = socket.id;
-
-    // db.query('INSERT IGNORE INTO users (user_id) VALUES (?)', [userId]);
     console.log(`✅ Registered user ${userId} with socket ${socket.id}`);
   });
 
-
-  socket.on('getLatestMessages', (senderId) => {
-    // const query = `
-    //   SELECT * FROM (
-    //     SELECT *, ROW_NUMBER() OVER (
-    //       PARTITION BY receiver_id ORDER BY timestamp DESC
-    //     ) AS rn
-    //     FROM messages
-    //     WHERE sender_id = ?
-    //   ) AS temp
-    //   WHERE rn = 1
-
-    // `;
+  socket.on('getLatestMessages', async senderId => {
     const query = `
-        SELECT * FROM (
-            SELECT *, 
-                ROW_NUMBER() OVER (
-                    PARTITION BY 
-                        CASE 
-                        WHEN sender_id < receiver_id THEN CONCAT(sender_id, '_', receiver_id)
-                        ELSE CONCAT(receiver_id, '_', sender_id)
-                        END
-                    ORDER BY timestamp DESC
-                ) AS rn
-            FROM messages
-            WHERE (sender_id = ? OR receiver_id = ?)
-        ) AS temp
-        WHERE rn = 1;
+      SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (
+          PARTITION BY 
+            CASE 
+              WHEN sender_id < receiver_id THEN sender_id || '_' || receiver_id
+              ELSE receiver_id || '_' || sender_id
+            END
+          ORDER BY timestamp DESC
+        ) AS rn
+        FROM messages
+        WHERE sender_id = $1 OR receiver_id = $1
+      ) AS temp
+      WHERE rn = 1;
     `;
-
-    db.query(query, [senderId,senderId], (err, results) => {
-      if (err) {
-        console.error('Query error:', err);
-        socket.emit('error', 'Database error');
-        return;
-      }
-      // Emit the results to the client
-      socket.emit('latestMessages', results);
-    });
+    try {
+      const result = await db.query(query, [senderId]);
+      socket.emit('latestMessages', result.rows);
+    } catch (err) {
+      console.error('Query error:', err);
+      socket.emit('error', 'Database error');
+    }
   });
 
-
-  socket.on('conversations', data => {
+  socket.on('conversations', async data => {
     const { from, to, message } = data;
     const targetSocket = userSocketMap[to];
 
-    // 💾 Store in MySQL
-    db.query(
-      'INSERT INTO messages (sender_id, receiver_id, message, delivered) VALUES (?, ?, ?, ?)',
-      [from, to, message, targetSocket ? 1 : 0]
-    );
+    try {
+      await db.query(
+        `INSERT INTO messages (sender_id, receiver_id, message, delivered) VALUES ($1, $2, $3, $4)`,
+        [from, to, message, targetSocket ? 1 : 0]
+      );
 
-    // 🔁 Send if recipient is online
-    if (targetSocket) {
-      io.to(targetSocket).emit('private_message', { from, message });
+      if (targetSocket) {
+        io.to(targetSocket).emit('private_message', { from, message });
+      }
+
+      console.log(`📨 ${from} ➡️ ${to}: ${message}`);
+    } catch (err) {
+      console.error('Insert error:', err);
     }
-
-    console.log(`📨 ${from} ➡️ ${to}: ${message}`);
   });
 
-  socket.on('private_message', data => {
+  socket.on('private_message', async data => {
     const { from, to, message } = data;
     const targetSocket = userSocketMap[to];
-    const senderSocket = userSocketMap[from];
 
-    // 💾 Store in MySQL
-    db.query(
-      'INSERT INTO messages (sender_id, receiver_id, message, delivered) VALUES (?, ?, ?, ?)',
-      [from, to, message, targetSocket ? 1 : 0]
-    );
+    try {
+      await db.query(
+        `INSERT INTO messages (sender_id, receiver_id, message, delivered) VALUES ($1, $2, $3, $4)`,
+        [from, to, message, targetSocket ? 1 : 0]
+      );
 
-    // 🔁 Send if recipient is online
-    if (targetSocket) {
-      const query = `
-        SELECT * FROM (
-            SELECT *, 
-                ROW_NUMBER() OVER (
-                    PARTITION BY 
-                        CASE 
-                        WHEN sender_id < receiver_id THEN CONCAT(sender_id, '_', receiver_id)
-                        ELSE CONCAT(receiver_id, '_', sender_id)
-                        END
-                    ORDER BY timestamp DESC
-                ) AS rn
+      if (targetSocket) {
+        const query = `
+          SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+              PARTITION BY 
+                CASE 
+                  WHEN sender_id < receiver_id THEN sender_id || '_' || receiver_id
+                  ELSE receiver_id || '_' || sender_id
+                END
+              ORDER BY timestamp DESC
+            ) AS rn
             FROM messages
-            WHERE sender_id = 'demo2' OR receiver_id = 'demo2'
-        ) AS temp
-        WHERE rn = 1;
-    `;
-
-    db.query(query, [to], (err, results) => {
-      if (err) {
-        console.error('Query error:', err);
-        socket.emit('error', 'Database error');
-        return;
+            WHERE sender_id = $1 OR receiver_id = $1
+          ) AS temp
+          WHERE rn = 1;
+        `;
+        const result = await db.query(query, [to]);
+        io.to(targetSocket).emit('latestMessages', result.rows);
+        io.to(targetSocket).emit('private_message', { from, message });
       }
-      // Emit the results to the client
-      io.to(targetSocket).emit('latestMessages', results);
-    });
-      io.to(targetSocket).emit('private_message', { from, message });
-    }
 
-    console.log(`📨 ${from} ➡️ ${to}: ${message}`);
+      console.log(`📨 ${from} ➡️ ${to}: ${message}`);
+    } catch (err) {
+      console.error('Error:', err);
+    }
   });
 
   socket.on('disconnect', () => {
@@ -209,5 +195,5 @@ io.on('connection', socket => {
 });
 
 server.listen(3000, () => {
-  console.log(`🚀 Server running at http://localhost:${3000}`);
+  console.log(`🚀 Server running at http://localhost:3000`);
 });

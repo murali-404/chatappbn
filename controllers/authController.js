@@ -1,80 +1,80 @@
-const db = require('../db');
+const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 
-exports.register = async (req, res)=>{
-    const {email, password} = req.body;
-    db.query('select * from users where email = ?',[email], async (err,results)=>{
+// Setup PostgreSQL connection
+const pool = new Pool({
+    connectionString: 'postgresql://root:kCBuMhyQpnu2uacBpPCwgtDuuTuhN38v@dpg-cvubgchr0fns73fvqj6g-a.oregon-postgres.render.com/test_kl8i',
+    ssl: {
+        rejectUnauthorized: false // required for Render
+    }              // Default PostgreSQL port
+});
 
-        if(err){
-            console.log(err);
-            return res.status(500).json({message:"something went wrong"});
+// Register new user
+exports.register = async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+
+        if (result.rows.length === 1) {
+            return res.status(409).json({ message: "Email already exists" });
         }
 
-        if(results.length==1){
-            return res.status(409).json({message:"Email already exist"});
-        }
+        const hashedPassword = await bcrypt.hash(password, 10);
 
-        const hashedPassword = await bcrypt.hash(password,10);
+        const insertRes = await pool.query(
+            'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id',
+            [email, hashedPassword]
+        );
 
-        db.query('insert into users(email,password) values (?,?)',[email,hashedPassword],(err,results)=>{
-            if(err){
-                console.error('Insert error:', err);
-                return res.status(500).json({ message: 'Database error during registration' });
-            }
-
-            return res.status(201).json({ message: 'User registered succesfully', result: results.insertId });
-            
+        return res.status(201).json({
+            message: "User registered successfully",
+            result: insertRes.rows[0].id
         });
-    });
+
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Something went wrong" });
+    }
 };
 
+// User login
+exports.login = async (req, res) => {
+    const { email, password } = req.body;
 
-exports.login = async (req, res)=>{
-    const {email, password} = req.body;
-    db.query('select * from users where email= ?',[email], async (err, results)=>{
-        if(err){
-            console.log(err);
-            return res.status(500).json({message:"something went wrong"});
-        }
-        if(results.length==0){
-            return res.status(401).json({message:"User not found"});
+    try {
+        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({ message: "User not found" });
         }
 
-        const ismatch = await bcrypt.compare(password,results[0].password);
+        const user = result.rows[0];
+        const isMatch = await bcrypt.compare(password, user.password);
 
-        if(ismatch){
-            console.log(results[0].id);
-            const token = generateAuthToken(results[0].id);
-            db.query('insert into tokens (user_id, token, updated_at) values(?,?,?)',[results[0].id, token, new Date()], (err,results)=>{
-                if(err){
-                    console.log(err);
-                    return res.status(500).json({message:"something went wrong"});
-                }
-                if(results.affectedRows>0){
-                    console.log('Token updated to the table');
-                    return res.status(200).json({message:"Login successfully",token:token});
-                }
-            });
+        if (!isMatch) {
+            return res.status(401).json({ message: "Invalid credentials" });
         }
-        else{
-            return res.status(401).json({message:"Invalid credentials"});
-        }
-    });
+
+        const token = generateAuthToken(user.id);
+
+        await pool.query(
+            'INSERT INTO tokens (user_id, token, updated_at) VALUES ($1, $2, $3)',
+            [user.id, token, new Date()]
+        );
+
+        return res.status(200).json({ message: "Login successfully", token });
+
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Something went wrong" });
+    }
 };
 
+// Generate JWT Token
 function generateAuthToken(userId) {
-    // Define the payload (user data to include in the token)
     const payload = { userId };
-
-    // Define a secret key for signing the token
-    const secretKey = 'your_secret_key';  // You should use a secure key here!
-
-    // Define options for the JWT (e.g., expiration)
-    // const options = { expiresIn: '1h' };  // Token will expire in 1 hour
-
-    // Create the JWT token
-    const token = jwt.sign(payload, secretKey);
-
-    return token;
+    const secretKey = 'your_secret_key';  // Replace with your secure secret key
+    return jwt.sign(payload, secretKey);
 }

@@ -1,8 +1,8 @@
-const express = require('express');
-const routes = express.Router();
-const userDetailsController = require('../controllers/userDetailsController');
+// const express = require('express');
+// const routes = express.Router();
+// const userDetailsController = require('../controllers/userDetailsController');
 
-console.log("server started succesfullyyyyys");
+// console.log("server started succesfullyyyyys");
 
-routes.get('/',userDetailsController.getUserDetailsAll);
-module.exports = routes;
+// routes.get('/',userDetailsController.getUserDetailsAll);
+// module.exports = routes;
