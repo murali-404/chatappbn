@@ -7,10 +7,18 @@ const app = express();
 
 app.use(cors());
 app.use(cors({
-  origin: '*',  // Allow all origins (replace with your domain in production)
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: '*',  // Allow all origins, you can replace '*' with your Flutter app's domain
+  methods: ['GET', 'POST', 'OPTIONS'],  // Make sure POST and OPTIONS are allowed
+  allowedHeaders: ['Content-Type', 'Authorization'],  // Ensure all headers you need are allowed
+  credentials: true  // Add this line if you are using cookies or credentials
 }));
+
+// Handle the OPTIONS request explicitly
+app.options('/api/auth/login', (req, res) => {
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.status(200).send();
+});
 app.use(express.json());
 
 // PostgreSQL DB Config
