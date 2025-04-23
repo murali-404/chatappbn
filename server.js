@@ -6,7 +6,11 @@ const { Pool } = require('pg');
 const app = express();
 
 app.use(cors());
-app.use(cors({ origin: '*' }));
+app.use(cors({
+  origin: '*',  // Allow all origins (replace with your domain in production)
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 
 // PostgreSQL DB Config
