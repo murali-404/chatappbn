@@ -13,10 +13,18 @@ async function createTables() {
     await client.connect();
     console.log('✅ Connected to PostgreSQL database.');
 
-    const userTable = `
+    // Completely drop the users table (including data and schema)
+    const dropUserTable = `
+      DROP TABLE IF EXISTS users CASCADE;
+    `;
+    await client.query(dropUserTable);
+    console.log('🗑️ Dropped the users table completely.');
+
+    // Create a new users table
+    const newUserTable = `
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL UNIQUE,
         password VARCHAR(255) NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -44,8 +52,9 @@ async function createTables() {
       );
     `;
 
-    await client.query(userTable);
-    console.log('🗃️ users table created or already exists.');
+    // Create new tables
+    await client.query(newUserTable);
+    console.log('🗃️ New users table created or already exists.');
 
     await client.query(tokensTable);
     console.log('🔑 tokens table created or already exists.');

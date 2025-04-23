@@ -1,6 +1,5 @@
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
 
 // Setup PostgreSQL connection
 const pool = new Pool({
@@ -15,17 +14,17 @@ exports.register = async (req, res) => {
     const { email, password } = req.body;
 
     try {
+        // Check if the email already exists
         const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
 
         if (result.rows.length === 1) {
             return res.status(409).json({ message: "Email already exists" });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
-
+        // Insert the new user with plaintext password
         const insertRes = await pool.query(
             'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id',
-            [email, hashedPassword]
+            [email, password]  // Store password as plain text (not secure)
         );
 
         return res.status(201).json({
@@ -44,6 +43,7 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     try {
+        // Check if the email exists
         const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
 
         if (result.rows.length === 0) {
@@ -51,14 +51,16 @@ exports.login = async (req, res) => {
         }
 
         const user = result.rows[0];
-        const isMatch = await bcrypt.compare(password, user.password);
 
-        if (!isMatch) {
+        // Compare the plaintext password (no hashing comparison here)
+        if (user.password !== password) {
             return res.status(401).json({ message: "Invalid credentials" });
         }
 
+        // Generate JWT Token
         const token = generateAuthToken(user.id);
 
+        // Insert token into the tokens table
         await pool.query(
             'INSERT INTO tokens (user_id, token, updated_at) VALUES ($1, $2, $3)',
             [user.id, token, new Date()]
